@@ -3,3 +3,20 @@
 SupportPilot is a small AI support SaaS used for the ThreatGenix YC demo.
 
 The demo story is a vibecoded app moving toward launch. The launch PR adds multi-tenant support inbox APIs, AI reply drafting, webhook ingestion, and conversation exports so ThreatGenix can review the PR before release.
+
+## Demo Surface
+
+- Multi-tenant organizations and tenant admins.
+- Tenant-owned customer conversations.
+- AI reply draft endpoint using conversation history.
+- Webhook ingestion endpoint for provider events.
+- Conversation export endpoint for customer support packets.
+
+## Local Run
+
+```bash
+npm install
+npm test
+npm run build
+npm run dev
+```
