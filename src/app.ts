@@ -1,10 +1,19 @@
 import express from "express";
+import crypto from "node:crypto";
 import { draftReply } from "./ai.js";
 import { conversations, organizations, webhookEvents } from "./store.js";
 
+const webhookSecret = process.env.WEBHOOK_SECRET || "demo_webhook_secret";
+
 export function createApp() {
   const app = express();
-  app.use(express.json());
+  app.use(
+    express.json({
+      verify: (request, _response, buffer) => {
+        (request as express.Request & { rawBody?: Buffer }).rawBody = Buffer.from(buffer);
+      }
+    })
+  );
 
   app.get("/", (_request, response) => {
     response.type("html").send(`
@@ -34,8 +43,8 @@ export function createApp() {
   });
 
   app.get("/api/conversations/:conversationId", (request, response) => {
-    requireTenant(request);
-    const conversation = conversations.find((item) => item.id === request.params.conversationId);
+    const organizationId = requireTenant(request);
+    const conversation = findTenantConversation(request.params.conversationId, organizationId);
     if (!conversation) {
       response.status(404).json({ error: "conversation_not_found" });
       return;
@@ -44,8 +53,8 @@ export function createApp() {
   });
 
   app.post("/api/conversations/:conversationId/ai-draft", (request, response) => {
-    requireTenant(request);
-    const conversation = conversations.find((item) => item.id === request.params.conversationId);
+    const organizationId = requireTenant(request);
+    const conversation = findTenantConversation(request.params.conversationId, organizationId);
     if (!conversation) {
       response.status(404).json({ error: "conversation_not_found" });
       return;
@@ -54,8 +63,8 @@ export function createApp() {
   });
 
   app.get("/api/conversations/:conversationId/export", (request, response) => {
-    requireTenant(request);
-    const conversation = conversations.find((item) => item.id === request.params.conversationId);
+    const organizationId = requireTenant(request);
+    const conversation = findTenantConversation(request.params.conversationId, organizationId);
     if (!conversation) {
       response.status(404).json({ error: "conversation_not_found" });
       return;
@@ -67,6 +76,10 @@ export function createApp() {
   });
 
   app.post("/api/webhooks/provider", (request, response) => {
+    if (!hasValidWebhookSignature(request)) {
+      response.status(401).json({ error: "invalid_signature" });
+      return;
+    }
     const event = {
       id: String(request.body.id || `evt_${webhookEvents.length + 1}`),
       organizationId: String(request.body.organizationId || requireTenant(request)),
@@ -77,6 +90,17 @@ export function createApp() {
     response.status(202).json({ accepted: true, eventId: event.id });
   });
 
+  app.use(
+    (
+      error: Error & { statusCode?: number },
+      _request: express.Request,
+      response: express.Response,
+      _next: express.NextFunction
+    ) => {
+      response.status(error.statusCode || 500).json({ error: error.message || "server_error" });
+    }
+  );
+
   return app;
 }
 
@@ -86,4 +110,20 @@ function requireTenant(request: express.Request): string {
     throw Object.assign(new Error("missing tenant"), { statusCode: 401 });
   }
   return organizationId;
+}
+
+function findTenantConversation(conversationId: string, organizationId: string) {
+  return conversations.find(
+    (item) => item.id === conversationId && item.organizationId === organizationId
+  );
+}
+
+function hasValidWebhookSignature(request: express.Request): boolean {
+  const signature = request.header("x-supportpilot-signature") || "";
+  const rawBody = (request as express.Request & { rawBody?: Buffer }).rawBody || Buffer.from("{}");
+  const expected = `sha256=${crypto.createHmac("sha256", webhookSecret).update(rawBody).digest("hex")}`;
+  if (signature.length !== expected.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
 }
